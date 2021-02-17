@@ -31,14 +31,6 @@
 #include <stdint.h>
 #include <stddef.h>
 
-/* HTTP_DO_NOT_USE_CUSTOM_CONFIG allows building the HTTP Client library
- * without a config file. If a config file is provided, the
- * HTTP_DO_NOT_USE_CUSTOM_CONFIG macro must not be defined.
- */
-#ifndef HTTP_DO_NOT_USE_CUSTOM_CONFIG
-    #include "core_http_config.h"
-#endif
-
 /* Include config defaults header to get default values of configurations not
  * defined in core_http_config.h file. */
 #include "core_http_config_defaults.h"
@@ -867,5 +859,48 @@ HTTPStatus_t HTTPClient_ReadHeader( const HTTPResponse_t * pResponse,
 /* @[declare_httpclient_strerror] */
 const char * HTTPClient_strerror( HTTPStatus_t status );
 /* @[declare_httpclient_strerror] */
+
+/**
+ * @brief Set max response header size in bytes
+ *
+ * @param[in] uSize The desired size
+ *
+ * @return One of the following:
+ * - #HTTPSuccess (If successful.)
+ * - #HTTPInvalidParameter (If any provided parameters or their members are invalid.)
+ */
+HTTPStatus_t HTTPClient_setMaxResponseHeaderSizeBytes( uint32_t uSize );
+
+/**
+ * @brief Set user agent value
+ *
+ * @param[in] pUserAgentValue the value of user agent
+ *
+ * @param[in] uUserAgentValueLen the length of user agent value
+ *
+ * @return One of the following:
+ * - #HTTPSuccess (If successful.)
+ * - #HTTPInvalidParameter (If any provided parameters or their members are invalid.)
+ */
+HTTPStatus_t HTTPClient_setUserAgent( char *pUserAgentValue,
+                                      size_t uUserAgentValueLen );
+
+/**
+ * @brief Receive and parse response
+ *
+ * @param[in] pTransport Transport interface, see #TransportInterface_t for
+ * more information.
+ *
+ * @param[in] pResponse The buffer containing the completed HTTP response.
+ *
+ * @param[in] isHeadResponse Set 1 if this is the response of HTTP "HEAD" request
+ *
+ * @return One of the following:
+ * - #HTTPSuccess (If successful.)
+ * - #HTTPInvalidParameter (If any provided parameters or their members are invalid.)
+ */
+HTTPStatus_t HTTPClient_receiveAndParseHttpResponse( const TransportInterface_t * pTransport,
+                                                     HTTPResponse_t * pResponse,
+                                                     uint8_t isHeadResponse);
 
 #endif /* ifndef CORE_HTTP_CLIENT_H_ */

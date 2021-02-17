@@ -423,6 +423,21 @@ static int httpParserOnHeaderValueCallback( http_parser * pHttpParser,
 static int httpParserOnHeadersCompleteCallback( http_parser * pHttpParser );
 
 /**
+ * @brief Global variable to store HTTP max response headers size in bytes.
+ */
+static uint32_t uHttpMaxResponseHeaderSizeBytes = HTTP_MAX_RESPONSE_HEADERS_SIZE_BYTES;
+
+/**
+ * @brief Global variable to store user agent value
+ */
+static char *pHttpUserAgentValue = HTTP_USER_AGENT_VALUE;
+
+/**
+ * @brief Global variable to store the length of user agent value
+ */
+static size_t uHttpUserAgentValueLen = HTTP_USER_AGENT_VALUE_LEN;
+
+/**
  * @brief Callback invoked during http_parser_execute() when the HTTP response
  * body is found.
  *
@@ -811,7 +826,7 @@ static int httpParserOnHeadersCompleteCallback( http_parser * pHttpParser )
      * request. A HEAD response will contain Content-Length, but no body. If
      * the parser is not stopped here, then it will try to keep parsing past the
      * end of the headers up to the Content-Length found. */
-    if( pParsingContext->isHeadResponse == 1U )
+    if( pParsingContext->isHeadResponse == 1U && pResponse->statusCode / 100 != 1 )
     {
         shouldContinueParse = HTTP_PARSER_STOP_PARSING;
     }
@@ -933,7 +948,7 @@ static void initializeParsingContextForFirstResponse( HTTPParsingContext_t * pPa
     /* Initialize the third-party HTTP parser to parse responses. */
     http_parser_init( &( pParsingContext->httpParser ), HTTP_RESPONSE );
 
-    http_parser_set_max_header_size( HTTP_MAX_RESPONSE_HEADERS_SIZE_BYTES );
+    http_parser_set_max_header_size( uHttpMaxResponseHeaderSizeBytes );
 
     /* No response has been parsed yet. */
     pParsingContext->state = HTTP_PARSING_NONE;
@@ -1548,8 +1563,8 @@ HTTPStatus_t HTTPClient_InitializeRequestHeaders( HTTPRequestHeaders_t * pReques
         returnStatus = addHeader( pRequestHeaders,
                                   HTTP_USER_AGENT_FIELD,
                                   HTTP_USER_AGENT_FIELD_LEN,
-                                  HTTP_USER_AGENT_VALUE,
-                                  HTTP_USER_AGENT_VALUE_LEN );
+                                  pHttpUserAgentValue,
+                                  uHttpUserAgentValueLen );
     }
 
     if( returnStatus == HTTPSuccess )
@@ -2530,3 +2545,113 @@ const char * HTTPClient_strerror( HTTPStatus_t status )
 }
 
 /*-----------------------------------------------------------*/
+
+HTTPStatus_t HTTPClient_setMaxResponseHeaderSizeBytes( uint32_t uSize )
+{
+    HTTPStatus_t returnStatus = HTTPSuccess;
+
+    if ( uSize <= 2 )
+    {
+        LogError( ( "Parameter check failed: uSize is too small." ) );
+        returnStatus = HTTPInvalidParameter;
+    }
+    else
+    {
+        uHttpMaxResponseHeaderSizeBytes = uSize;
+    }
+
+    return returnStatus;
+}
+
+/*-----------------------------------------------------------*/
+
+HTTPStatus_t HTTPClient_setUserAgent( char *pUserAgentValue, size_t uUserAgentValueLen )
+{
+    HTTPStatus_t returnStatus = HTTPSuccess;
+
+    if( pUserAgentValue == NULL )
+    {
+        LogError( ( "Parameter check failed: pUserAgentValue is NULL." ) );
+        returnStatus = HTTPInvalidParameter;
+    }
+    else if( uUserAgentValueLen == 0 )
+    {
+        LogError( ( "Parameter check failed: uUserAgentValueLen is zero." ) );
+        returnStatus = HTTPInvalidParameter;
+    }
+    else
+    {
+        pHttpUserAgentValue = pUserAgentValue;
+        uHttpUserAgentValueLen = uUserAgentValueLen;
+    }
+
+    return returnStatus;
+}
+
+HTTPStatus_t HTTPClient_receiveAndParseHttpResponse( const TransportInterface_t * pTransport,
+                                                     HTTPResponse_t * pResponse,
+                                                     uint8_t isHeadResponse)
+{
+    HTTPStatus_t returnStatus = HTTPSuccess;
+    size_t totalReceived = 0U;
+    size_t currentReceived = 0U;
+    HTTPParsingContext_t parsingContext = { 0 };
+    uint8_t shouldRecv = 1U;
+
+    assert( pTransport != NULL );
+    assert( pTransport->recv != NULL );
+    assert( pResponse != NULL );
+
+    /* Initialize the parsing context for parsing the response received from the
+     * network. */
+    initializeParsingContextForFirstResponse( &parsingContext );
+
+    while( shouldRecv == 1U )
+    {
+        /* Receive the HTTP response data into the pResponse->pBuffer. */
+        returnStatus = receiveHttpData( pTransport,
+                                        pResponse->pBuffer + totalReceived,
+                                        pResponse->bufferLen - totalReceived,
+                                        &currentReceived );
+
+        if( returnStatus == HTTPSuccess )
+        {
+            /* Data is received into the buffer and must be parsed. Parsing is
+             * invoked even with a length of zero. A length of zero indicates to
+             * the parser that there is no more data from the server (EOF). */
+            returnStatus = parseHttpResponse( &parsingContext,
+                                              pResponse,
+                                              currentReceived,
+                                              isHeadResponse );
+            totalReceived += currentReceived;
+        }
+
+        /* Reading should continue if there are no errors in the transport recv
+         * or parsing, non-zero data was received from the network,
+         * the parser indicated the response message is not finished, and there
+         * is room in the response buffer. */
+        shouldRecv = ( ( returnStatus == HTTPSuccess ) &&
+                       ( currentReceived > 0U ) &&
+                       ( parsingContext.state != HTTP_PARSING_COMPLETE ) &&
+                       ( totalReceived < pResponse->bufferLen ) ) ? 1U : 0U;
+        if ( shouldRecv == 0U )
+        {
+            if ( pResponse->statusCode / 100 == 1U )
+            {
+                shouldRecv = 1U;
+            }
+        }
+    }
+
+    if( returnStatus == HTTPSuccess )
+    {
+        /* If there are errors in receiving from the network or during parsing,
+         * the final status of the response message is derived from the state of
+         * the parsing and how much data is in the buffer. */
+        returnStatus = getFinalResponseStatus( parsingContext.state,
+                                               totalReceived,
+                                               pResponse->bufferLen );
+    }
+
+    return returnStatus;
+}
